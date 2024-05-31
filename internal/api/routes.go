@@ -55,6 +55,11 @@ func (a *Api) Routes() error {
 	groupOrganization.Name("Delete Organization").Delete("/:id", a.DeleteOrganization)
 	groupOrganization.Name("Restore Organization").Patch("/:id", a.RestoreOrganization)
 
+	// Capture Pages
+	groupCapturePages := v1.Group("/capturepages")
+	groupCapturePages.Name("List Capture Pages").Get("", a.ListCapturePages)
+	groupCapturePages.Name("Create Capture Pages").Post("", a.CreateCapturePages)
+
 	// Docs
 	if err := a.loadStaticRoutes(); err != nil {
 		return fmt.Errorf("load static routes: %w", err)
