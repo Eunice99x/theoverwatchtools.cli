@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/dembygenesis/local.tools/internal/api/apifakes"
 	"github.com/dembygenesis/local.tools/internal/api/testassets"
 	"github.com/dembygenesis/local.tools/internal/lib/logger"
@@ -19,7 +21,10 @@ import (
 )
 
 type testServices struct {
-	catService categoryService
+	catService      categoryService
+	orgService      organizationService
+	capPagesService capturePagesService
+	ctService       clickTrackerService
 }
 
 type testCaseCreateCategory struct {
@@ -39,7 +44,7 @@ func getTestCasesCreateCategory() []testCaseCreateCategory {
 			},
 			fnGetTestServices: func(t *testing.T) (*testServices, func()) {
 				container, cleanup := testassets.GetConcreteContainer(t)
-				return &testServices{catService: container.CategoryService}, func() {
+				return &testServices{catService: container.CategoryService, orgService: container.OrganizationService, capPagesService: container.CapturePagesService}, func() {
 					cleanup()
 				}
 			},
@@ -61,7 +66,7 @@ func getTestCasesCreateCategory() []testCaseCreateCategory {
 			body: map[string]interface{}{},
 			fnGetTestServices: func(t *testing.T) (*testServices, func()) {
 				container, cleanup := testassets.GetConcreteContainer(t)
-				return &testServices{catService: container.CategoryService}, func() {
+				return &testServices{catService: container.CategoryService, orgService: container.OrganizationService, capPagesService: container.CapturePagesService}, func() {
 					cleanup()
 				}
 			},
@@ -79,7 +84,7 @@ func getTestCasesCreateCategory() []testCaseCreateCategory {
 			},
 			fnGetTestServices: func(t *testing.T) (*testServices, func()) {
 				container, cleanup := testassets.GetConcreteContainer(t)
-				return &testServices{catService: container.CategoryService}, func() {
+				return &testServices{catService: container.CategoryService, orgService: container.OrganizationService, capPagesService: container.CapturePagesService}, func() {
 					cleanup()
 				}
 			},
@@ -98,7 +103,11 @@ func getTestCasesCreateCategory() []testCaseCreateCategory {
 			fnGetTestServices: func(t *testing.T) (*testServices, func()) {
 				fakeCategoryService := apifakes.FakeCategoryService{}
 				fakeCategoryService.CreateCategoryReturns(nil, errors.New("mock error"))
-				return &testServices{catService: &fakeCategoryService}, func() {}
+				fakeOrganizationService := apifakes.FakeOrganizationService{}
+				fakeOrganizationService.CreateOrganizationReturns(nil, errors.New("mock error"))
+				fakeCapturePagesService := apifakes.FakeCapturePagesService{}
+				fakeCapturePagesService.CreateCapturePagesReturns(nil, errors.New("mock error"))
+				return &testServices{catService: &fakeCategoryService, orgService: &fakeOrganizationService, capPagesService: &fakeCapturePagesService}, func() {}
 			},
 			assertions: func(t *testing.T, resp []byte, respCode int) {
 				require.NotNil(t, resp, "unexpected nil response")
@@ -108,41 +117,43 @@ func getTestCasesCreateCategory() []testCaseCreateCategory {
 	}
 }
 
-//func Test_CreateCategory(t *testing.T) {
-//	for _, testCase := range getTestCasesCreateCategory() {
-//		t.Run(testCase.name, func(t *testing.T) {
-//			handlers, cleanup := testCase.fnGetTestServices(t)
-//			defer cleanup()
-//
-//			cfg := &Config{
-//				BaseUrl:         testassets.MockBaseUrl,
-//				Port:            3000,
-//				CategoryService: handlers.catService,
-//				Logger:          logger.New(context.TODO()),
-//			}
-//
-//			api, err := New(cfg)
-//			require.NoError(t, err, "unexpected error instantiating api")
-//			require.NotNil(t, api, "unexpected api nil instance")
-//
-//			reqB, err := json.Marshal(testCase.body)
-//			require.NoError(t, err, "unexpected error marshalling parameters")
-//
-//			req := httptest.NewRequest(http.MethodPost, "/api/v1/category", bytes.NewBuffer(reqB))
-//			req.Header = map[string][]string{
-//				"Content-Type":    {"application/json"},
-//				"Accept-Encoding": {"gzip", "deflate", "br"},
-//			}
-//
-//			resp, err := api.app.Test(req, 100)
-//			require.NoError(t, err, "unexpected error executing test")
-//
-//			respBytes, err := io.ReadAll(resp.Body)
-//			require.Nil(t, err, "unexpected error reading the response")
-//			testCase.assertions(t, respBytes, resp.StatusCode)
-//		})
-//	}
-//}
+func Test_CreateCategory(t *testing.T) {
+	for _, testCase := range getTestCasesCreateCategory() {
+		t.Run(testCase.name, func(t *testing.T) {
+			handlers, cleanup := testCase.fnGetTestServices(t)
+			defer cleanup()
+
+			cfg := &Config{
+				BaseUrl:             testassets.MockBaseUrl,
+				Port:                3000,
+				CategoryService:     handlers.catService,
+				OrganizationService: handlers.orgService,
+				CapturePagesService: handlers.capPagesService,
+				Logger:              logger.New(context.TODO()),
+			}
+
+			api, err := New(cfg)
+			require.NoError(t, err, "unexpected error instantiating api")
+			require.NotNil(t, api, "unexpected api nil instance")
+
+			reqB, err := json.Marshal(testCase.body)
+			require.NoError(t, err, "unexpected error marshalling parameters")
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/category", bytes.NewBuffer(reqB))
+			req.Header = map[string][]string{
+				"Content-Type":    {"application/json"},
+				"Accept-Encoding": {"gzip", "deflate", "br"},
+			}
+
+			resp, err := api.app.Test(req, 100)
+			require.NoError(t, err, "unexpected error executing test")
+
+			respBytes, err := io.ReadAll(resp.Body)
+			require.Nil(t, err, "unexpected error reading the response")
+			testCase.assertions(t, respBytes, resp.StatusCode)
+		})
+	}
+}
 
 type testCaseListCategory struct {
 	name            string
@@ -308,13 +319,16 @@ func Test_ListCategories(t *testing.T) {
 			}
 
 			handlers, cleanup := testCase.getContainer(t)
+
 			defer cleanup()
 
 			cfg := &Config{
-				BaseUrl:         testassets.MockBaseUrl,
-				Port:            3000,
-				CategoryService: handlers.CategoryService,
-				Logger:          logger.New(context.TODO()),
+				BaseUrl:             testassets.MockBaseUrl,
+				Port:                3000,
+				CategoryService:     handlers.CategoryService,
+				OrganizationService: handlers.OrganizationService,
+				CapturePagesService: handlers.CapturePagesService,
+				Logger:              logger.New(context.TODO()),
 			}
 
 			api, err := New(cfg)
@@ -336,6 +350,8 @@ func Test_ListCategories(t *testing.T) {
 			respBytes, err := io.ReadAll(resp.Body)
 			require.Nil(t, err, "unexpected error reading the response")
 			testCase.assertions(t, respBytes, resp.StatusCode)
+
+			fmt.Println("testing the cat tests")
 		})
 	}
 }
@@ -354,16 +370,21 @@ func getTestCasesUpdateCategory() []testCaseUpdateCategory {
 			name: "success",
 			fnGetTestServices: func(t *testing.T) (*testServices, func()) {
 				container, cleanup := testassets.GetConcreteContainer(t)
-				return &testServices{catService: container.CategoryService}, func() {
-					cleanup()
-				}
+				return &testServices{
+						orgService:      container.OrganizationService,
+						capPagesService: container.CapturePagesService,
+						catService:      container.CategoryService,
+					}, func() {
+						cleanup()
+					}
 			},
 			mutations: func(t *testing.T, modules *testassets.Container) {
 
 			},
 			body: map[string]interface{}{
-				"id":   1,
-				"name": "demby",
+				"id":                   1,
+				"category_type_ref_id": 1,
+				"name":                 "Lawrence",
 			},
 			assertions: func(t *testing.T, resp []byte, respCode int) {
 				require.Equal(t, http.StatusOK, respCode)
@@ -376,38 +397,178 @@ func getTestCasesUpdateCategory() []testCaseUpdateCategory {
 	}
 }
 
-//func Test_UpdateCategory(t *testing.T) {
-//	for _, testCase := range getTestCasesUpdateCategory() {
-//		t.Run(testCase.name, func(t *testing.T) {
-//			handlers, cleanup := testCase.fnGetTestServices(t)
-//			defer cleanup()
-//
-//			cfg := &Config{
-//				BaseUrl:         testassets.MockBaseUrl,
-//				Port:            3000,
-//				CategoryService: handlers.catService,
-//				Logger:          logger.New(context.TODO()),
-//			}
-//
-//			api, err := New(cfg)
-//			require.NoError(t, err, "unexpected error instantiating api")
-//			require.NotNil(t, api, "unexpected api nil instance")
-//
-//			reqB, err := json.Marshal(testCase.body)
-//			require.NoError(t, err, "unexpected error marshalling parameters")
-//
-//			req := httptest.NewRequest(http.MethodPatch, "/api/v1/category", bytes.NewBuffer(reqB))
-//			req.Header = map[string][]string{
-//				"Content-Type":    {"application/json"},
-//				"Accept-Encoding": {"gzip", "deflate", "br"},
-//			}
-//
-//			resp, err := api.app.Test(req, 100)
-//			require.NoError(t, err, "unexpected error executing test")
-//
-//			respBytes, err := io.ReadAll(resp.Body)
-//			require.Nil(t, err, "unexpected error reading the response")
-//			testCase.assertions(t, respBytes, resp.StatusCode)
-//		})
-//	}
-//}
+func Test_UpdateCategory(t *testing.T) {
+	for _, testCase := range getTestCasesUpdateCategory() {
+		t.Run(testCase.name, func(t *testing.T) {
+			handlers, cleanup := testCase.fnGetTestServices(t)
+			defer cleanup()
+
+			cfg := &Config{
+				BaseUrl:             testassets.MockBaseUrl,
+				Port:                3000,
+				CapturePagesService: handlers.capPagesService,
+				CategoryService:     handlers.catService,
+				OrganizationService: handlers.orgService,
+				Logger:              logger.New(context.TODO()),
+			}
+
+			api, err := New(cfg)
+			require.NoError(t, err, "unexpected error instantiating api")
+			require.NotNil(t, api, "unexpected api nil instance")
+
+			reqB, err := json.Marshal(testCase.body)
+			require.NoError(t, err, "unexpected error marshalling parameters")
+
+			req := httptest.NewRequest(http.MethodPatch, "/api/v1/category", bytes.NewBuffer(reqB))
+			req.Header = map[string][]string{
+				"Content-Type":    {"application/json"},
+				"Accept-Encoding": {"gzip", "deflate", "br"},
+			}
+
+			resp, err := api.app.Test(req, 100)
+			require.NoError(t, err, "unexpected error executing test")
+
+			respBytes, err := io.ReadAll(resp.Body)
+			require.Nil(t, err, "unexpected error reading the response")
+			testCase.assertions(t, respBytes, resp.StatusCode)
+		})
+	}
+}
+
+type testCaseDeleteCategory struct {
+	name              string
+	fnGetTestServices func(t *testing.T) (*testServices, func())
+	mutations         func(t *testing.T, modules *testassets.Container)
+	catID             int
+	assertions        func(t *testing.T, resp []byte, respCode int)
+}
+
+func getTestCasesDeleteCategory() []testCaseDeleteCategory {
+	return []testCaseDeleteCategory{
+		{
+			name: "success",
+			fnGetTestServices: func(t *testing.T) (*testServices, func()) {
+				container, cleanup := testassets.GetConcreteContainer(t)
+				return &testServices{
+						catService:      container.CategoryService,
+						orgService:      container.OrganizationService,
+						capPagesService: container.CapturePagesService,
+					}, func() {
+						cleanup()
+					}
+			},
+			mutations: func(t *testing.T, modules *testassets.Container) {
+
+			},
+			catID: 1,
+			assertions: func(t *testing.T, resp []byte, respCode int) {
+				require.Equal(t, http.StatusOK, respCode)
+				var organization *model.Category
+				err := json.Unmarshal(resp, &organization)
+				require.NoError(t, err, "unexpected error unmarshalling the response")
+				modelhelpers.AssertNonEmptyCategories(t, []model.Category{*organization})
+			},
+		},
+	}
+}
+
+func Test_DeleteCategory(t *testing.T) {
+	for _, testCase := range getTestCasesDeleteCategory() {
+		t.Run(testCase.name, func(t *testing.T) {
+			handlers, cleanup := testCase.fnGetTestServices(t)
+			defer cleanup()
+
+			cfg := &Config{
+				BaseUrl:             testassets.MockBaseUrl,
+				Port:                3000,
+				CapturePagesService: handlers.capPagesService,
+				CategoryService:     handlers.catService,
+				OrganizationService: handlers.orgService,
+				Logger:              logger.New(context.TODO()),
+			}
+
+			api, err := New(cfg)
+			require.NoError(t, err, "unexpected error instantiating api")
+			require.NotNil(t, api, "unexpected api nil instance")
+
+			url := fmt.Sprintf("/api/v1/category/%d", testCase.catID)
+			req := httptest.NewRequest(http.MethodDelete, url, nil)
+			req.Header = map[string][]string{
+				"Content-Type":    {"application/json"},
+				"Accept-Encoding": {"gzip", "deflate", "br"},
+			}
+
+			_, err = api.app.Test(req, 100)
+			require.NoError(t, err, "unexpected error executing test")
+		})
+	}
+}
+
+type testCaseRestoreCategory struct {
+	name              string
+	fnGetTestServices func(t *testing.T) (*testServices, func())
+	mutations         func(t *testing.T, modules *testassets.Container)
+	catID             int
+	assertions        func(t *testing.T, resp []byte, respCode int)
+}
+
+func getTestCasesRestoreCategory() []testCaseRestoreCategory {
+	return []testCaseRestoreCategory{
+		{
+			name: "success",
+			fnGetTestServices: func(t *testing.T) (*testServices, func()) {
+				container, cleanup := testassets.GetConcreteContainer(t)
+				return &testServices{
+						catService:      container.CategoryService,
+						orgService:      container.OrganizationService,
+						capPagesService: container.CapturePagesService,
+					}, func() {
+						cleanup()
+					}
+			},
+			mutations: func(t *testing.T, modules *testassets.Container) {
+
+			},
+			catID: 1,
+			assertions: func(t *testing.T, resp []byte, respCode int) {
+				require.Equal(t, http.StatusOK, respCode)
+				var categories *model.Category
+				err := json.Unmarshal(resp, &categories)
+				require.NoError(t, err, "unexpected error unmarshalling the response")
+				modelhelpers.AssertNonEmptyCategories(t, []model.Category{*categories})
+			},
+		},
+	}
+}
+
+func Test_RestoreCategory(t *testing.T) {
+	for _, testCase := range getTestCasesRestoreCategory() {
+		t.Run(testCase.name, func(t *testing.T) {
+			handlers, cleanup := testCase.fnGetTestServices(t)
+			defer cleanup()
+
+			cfg := &Config{
+				BaseUrl:             testassets.MockBaseUrl,
+				Port:                3000,
+				CapturePagesService: handlers.capPagesService,
+				CategoryService:     handlers.catService,
+				OrganizationService: handlers.orgService,
+				Logger:              logger.New(context.TODO()),
+			}
+
+			api, err := New(cfg)
+			require.NoError(t, err, "unexpected error instantiating api")
+			require.NotNil(t, api, "unexpected api nil instance")
+
+			url := fmt.Sprintf("/api/v1/category/%d", testCase.catID)
+			req := httptest.NewRequest(http.MethodPatch, url, nil)
+			req.Header = map[string][]string{
+				"Content-Type":    {"application/json"},
+				"Accept-Encoding": {"gzip", "deflate", "br"},
+			}
+
+			_, err = api.app.Test(req, 100)
+			require.NoError(t, err, "unexpected error executing test")
+		})
+	}
+}
